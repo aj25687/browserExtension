@@ -61,4 +61,15 @@ chrome.runtime.onMessage.addListener((msg) => {
         injectBlur();
         injectBreakPopup();
     }
-});
+
+    if (msg.action === "nudge_continue") {
+        if (blurLayer) blurLayer.remove();
+        if (popupContainer) popupContainer.remove();
+        blurLayer = null;
+        popupContainer = null;
+    }
+
+    if (msg.action === "nudge_break") {
+        location.href = "about:blank";
+    }
+});;
