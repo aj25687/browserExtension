@@ -1,16 +1,28 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <link rel="stylesheet" href="popup.css">
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-    <h2>Tech Balance</h2>
+  <h2>Tech Balance</h2>
 
+  <div>
+    <label>Default limit minutes</label>
+    <input id="defaultLimit" type="number" min="0" step="5" />
+    <button id="saveDefault">Save</button>
+  </div>
+
+  <div style="margin-top:10px;">
     <button id="openDashboard">Open Dashboard</button>
+  </div>
+
+  <div style="margin-top:12px;">
     <button id="showToday">Show Today's Usage</button>
+  </div>
 
-    <div id="output"></div>
+  <div id="output" style="margin-top:10px; font-size:13px;"></div>
 
-    <script src="popup.js"></script>
+  <script src="popup.js"></script>
 </body>
 </html>

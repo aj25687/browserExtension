@@ -1,5 +1,16 @@
-<div class="nudge-box">
-    <h3>Take a quick break?</h3>
-    <button id="continue">Keep Going</button>
-    <button id="break">Take Break</button>
+<link rel="stylesheet" href="alerts/nudge.css">
+<div class="nudge-box-overlay">
+  <div class="nudge-box">
+    <h3>Time limit reached</h3>
+    <p>You have reached your time limit for this site.</p>
+
+    <div class="nudge-actions">
+      <button id="continue" class="btn">Keep going 5 min</button>
+      <button id="extend5" class="btn small"> +5</button>
+      <button id="extend15" class="btn small"> +15</button>
+      <button id="break" class="btn muted">Take break</button>
+    </div>
+
+    <p class="small">Or set per site rules in the dashboard</p>
+  </div>
 </div>

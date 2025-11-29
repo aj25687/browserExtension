@@ -1,13 +1,32 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <link rel="stylesheet" href="dashboard.css">
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
-    <h1>Tech Balance Dashboard</h1>
+  <h1>Tech Balance Dashboard</h1>
 
-    <div id="data"></div>
+  <section>
+    <h3>Usage</h3>
+    <div id="usage"></div>
+  </section>
 
-    <script src="dashboard.js"></script>
+  <section>
+    <h3>Per-site limits</h3>
+    <div id="limits"></div>
+    <div style="margin-top:8px;">
+      <input id="siteInput" placeholder="example.com" />
+      <input id="siteLimit" type="number" min="0" step="5" placeholder="minutes" />
+      <button id="setSiteLimit">Set</button>
+    </div>
+  </section>
+
+  <section style="margin-top:16px;">
+    <button id="resetData">Reset Usage Data</button>
+    <button id="exportCsv">Export CSV</button>
+  </section>
+
+  <script src="dashboard.js"></script>
 </body>
 </html>
