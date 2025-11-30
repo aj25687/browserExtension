@@ -1,3 +1,4 @@
+console.log("BACKGROUND SCRIPT LOADED");
 let activeTab = null;
 let activeStart = null;
 
