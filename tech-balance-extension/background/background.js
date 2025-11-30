@@ -1,89 +1,100 @@
 let activeTab = null;
 let activeStartTime = null;
 
+// record time every X ms even if tab is active
+const SAVE_INTERVAL = 5000; // 5 seconds
+
 function getTodayKey() {
     const d = new Date();
     return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
-chrome.tabs.onActivated.addListener((info) => {
-    handleTabChange(info.tabId);
-});
+function safeSend(tabId, msg) {
+    chrome.tabs.sendMessage(tabId, msg, () => {
+        if (chrome.runtime.lastError) {}
+    });
+}
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === "complete") {
-        handleTabChange(tabId);
+function getDomain(url) {
+    try {
+        return new URL(url).hostname.replace(/^www\./, "");
+    } catch (e) {
+        return null;
     }
-});
+}
 
-function handleTabChange(tabId) {
-    if (activeTab !== null) {
-        saveTime(activeTab);
+async function handleTabChange(tabId) {
+    // save time for previous tab
+    if (activeTab !== null && activeStartTime) {
+        await saveTime(activeTab);
     }
+
     activeTab = tabId;
     activeStartTime = Date.now();
 }
 
-function safeSend(tabId, msg) {
-    chrome.tabs.sendMessage(tabId, msg, () => {
-        if (chrome.runtime.lastError) {
-            // silently ignore
-        }
-    });
-}
-
+// save elapsed time for tabId
 function saveTime(tabId) {
-    if (!activeStartTime) return;
+    return new Promise((resolve) => {
+        if (!activeStartTime) return resolve();
 
-    const duration = Date.now() - activeStartTime;
-    activeStartTime = null;
+        const duration = Date.now() - activeStartTime;
+        activeStartTime = Date.now(); // reset start time
 
-    chrome.tabs.get(tabId, (tab) => {
-        if (chrome.runtime.lastError) return;
-        if (!tab || !tab.url) return;
+        chrome.tabs.get(tabId, (tab) => {
+            if (chrome.runtime.lastError || !tab || !tab.url) return resolve();
 
-        // Only record hostname + first path segment
-        const urlObj = new URL(tab.url);
-        const hostname = urlObj.hostname.replace(/^www\./, "");
-        const pathSegment = urlObj.pathname.split("/")[1]; // first segment after "/"
-        const domainPath = pathSegment ? `${hostname}/${pathSegment}` : hostname;
+            const domain = getDomain(tab.url);
+            if (!domain) return resolve();
 
-        const dayKey = getTodayKey();
+            const dayKey = getTodayKey();
 
-        chrome.storage.local.get(["timeData", "limits", "blockModes"], (res) => {
-            const data = res.timeData || {};
-            const limits = res.limits || {};
-            const blockModes = res.blockModes || {};
+            chrome.storage.local.get(["timeData", "limits", "blockModes"], (res) => {
+                const data = res.timeData || {};
+                const limits = res.limits || {};
+                const blockModes = res.blockModes || {};
 
-            if (!data[dayKey]) data[dayKey] = {};
-            data[dayKey][domainPath] = (data[dayKey][domainPath] || 0) + duration;
+                if (!data[dayKey]) data[dayKey] = {};
+                data[dayKey][domain] = (data[dayKey][domain] || 0) + duration;
 
-            chrome.storage.local.set({ timeData: data });
+                chrome.storage.local.set({ timeData: data });
 
-            const limit = limits[hostname]; // still check limit by main domain
-            const mode = blockModes[hostname] || "soft";
+                const limit = limits[domain];
+                const mode = blockModes[domain] || "soft";
 
-            if (limit !== undefined) {
-                const spentMin = Math.floor(data[dayKey][domainPath] / 60000);
+                if (limit !== undefined) {
+                    const spentMin = Math.floor(data[dayKey][domain] / 60000);
 
-                if (spentMin >= limit) {
-                    safeSend(tabId, {
-                        action: "applyBlock",
-                        mode: mode
-                    });
-                    chrome.tabs.update(tabId, { muted: true });
+                    if (spentMin >= limit) {
+                        safeSend(tabId, { action: "applyBlock", mode });
+                        chrome.tabs.update(tabId, { muted: true });
+                    }
                 }
-            }
+
+                resolve();
+            });
         });
     });
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
-    if (msg.action === "soft_override") {
-        if (!sender.tab) return;
-        safeSend(sender.tab.id, {
-            action: "show_goal_banner",
-            goal: msg.goal
-        });
-    }
+// listen to tab changes
+chrome.tabs.onActivated.addListener(info => handleTabChange(info.tabId));
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === "complete") handleTabChange(tabId);
+});
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (tabId === activeTab) saveTime(tabId).then(() => {
+        activeTab = null;
+        activeStartTime = null;
+    });
+});
+
+// periodically save active tab time
+setInterval(() => {
+    if (activeTab !== null) saveTime(activeTab);
+}, SAVE_INTERVAL);
+
+// initialize: find the currently active tab when extension loads
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) handleTabChange(tabs[0].id);
 });
