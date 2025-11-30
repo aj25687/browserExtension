@@ -1,87 +1,117 @@
-let activeTab = null;
-let activeStartTime = null;
+// Track time per hostname
+const siteState = {};  
+// Example structure:
+// siteState["youtube.com"] = {
+//     timeSpent: 0,
+//     limit: 120,
+//     blockType: "soft",
+//     objective: null,
+//     timer: null
+// };
 
-function getTodayKey() {
-    const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-}
-
-chrome.tabs.onActivated.addListener((info) => {
-    handleTabChange(info.tabId);
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (!tab.url || changeInfo.status !== "complete") return;
+    handleTab(tabId, tab.url);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === "complete") {
-        handleTabChange(tabId);
-    }
+chrome.tabs.onActivated.addListener(active => {
+    chrome.tabs.get(active.tabId, tab => {
+        if (chrome.runtime.lastError || !tab || !tab.url) return;
+        handleTab(tab.id, tab.url);
+    });
 });
 
-function handleTabChange(tabId) {
-    if (activeTab !== null) {
-        saveTime(activeTab);
-    }
-    activeTab = tabId;
-    activeStartTime = Date.now();
+// MAIN HANDLER
+function handleTab(tabId, url) {
+    const hostname = getHostname(url);
+    if (!siteState[hostname]) return;
+
+    startTimer(tabId, hostname);
 }
 
-function safeSend(tabId, msg) {
-    chrome.tabs.sendMessage(tabId, msg, () => {
-        if (chrome.runtime.lastError) {
-            // The tab probably doesn't have the script loaded
-            // or the tabId is invalid.
-            // We silently ignore this instead of crashing.
+function startTimer(tabId, hostname) {
+    const state = siteState[hostname];
+    if (!state) return;
+
+    if (state.timer) clearInterval(state.timer);
+
+    state.timer = setInterval(() => {
+        state.timeSpent++;
+
+        // Soft block
+        if (state.blockType === "soft" && state.timeSpent >= state.limit) {
+            activateSoftBlock(tabId, hostname);
         }
+
+        // Hard block
+        if (state.blockType === "hard") {
+            activateHardBlock(tabId, hostname);
+        }
+
+    }, 1000);
+}
+
+function activateSoftBlock(tabId, hostname) {
+    const state = siteState[hostname];
+
+    chrome.tabs.update(tabId, { muted: true });
+
+    chrome.tabs.sendMessage(tabId, {
+        action: "showSoftBlock",
+        objective: state.objective
     });
 }
 
-function saveTime(tabId) {
-    if (!activeStartTime) return;
+function activateHardBlock(tabId, hostname) {
+    chrome.tabs.update(tabId, { muted: true });
 
-    const duration = Date.now() - activeStartTime;
-    activeStartTime = null;
-
-    chrome.tabs.get(tabId, (tab) => {
-        if (chrome.runtime.lastError) return;  // tab died
-        if (!tab || !tab.url) return;
-
-        const domain = new URL(tab.url).hostname;
-        const dayKey = getTodayKey();
-
-        chrome.storage.local.get(["timeData", "limits", "blockModes"], (res) => {
-            const data = res.timeData || {};
-            const limits = res.limits || {};
-            const blockModes = res.blockModes || {};
-
-            if (!data[dayKey]) data[dayKey] = {};
-            data[dayKey][domain] = (data[dayKey][domain] || 0) + duration;
-
-            chrome.storage.local.set({ timeData: data });
-
-            const limit = limits[domain];
-            const mode = blockModes[domain] || "soft";
-
-            if (limit !== undefined) {
-                const spentMin = Math.floor(data[dayKey][domain] / 60000);
-
-                if (spentMin >= limit) {
-                    safeSend(tabId, {
-                        action: "applyBlock",
-                        mode: mode
-                    });
-
-                    chrome.tabs.update(tabId, { muted: true });
-                }
-            }
-        });
+    chrome.tabs.sendMessage(tabId, {
+        action: "showHardBlock"
     });
 }
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
-    if (msg.action === "soft_override") {
-        if (!sender.tab) return;
-        safeSend(sender.tab.id, {
-            action: "show_goal_banner",
-            goal: msg.goal
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    const tabId = sender.tab?.id;
+    if (!tabId) return;
+
+    if (msg.action === "setSiteSettings") {
+        const { hostname, limit, blockType } = msg;
+
+        siteState[hostname] = {
+            timeSpent: 0,
+            limit,
+            blockType,
+            objective: null,
+            timer: null
+        };
+
+        sendResponse({ ok: true });
+        return;
+    }
+
+    if (msg.action === "objectiveEntered") {
+        const hostname = msg.hostname;
+        const objective = msg.objective;
+
+        if (!siteState[hostname]) return;
+
+        siteState[hostname].objective = objective;
+
+        chrome.tabs.update(tabId, { muted: false });
+
+        chrome.tabs.sendMessage(tabId, {
+            action: "hideOverlay"
         });
+
+        sendResponse({ ok: true });
+        return;
     }
 });
+
+function getHostname(url) {
+    try {
+        return new URL(url).hostname.replace("www.", "");
+    } catch {
+        return "";
+    }
+}
