@@ -1,129 +1,70 @@
-console.log("BACKGROUND SCRIPT LOADED");
-let activeTab = null;
-let activeStart = null;
+let activeTabId = null;
+let activeUrl = null;
+let startTime = null;
 
-function getHostname(url) {
-    try {
-        return new URL(url).hostname.replace("www.", "");
-    } catch {
-        return "";
+// Helper: ignore chrome internal pages
+function isValidUrl(url) {
+    return url && !url.startsWith('chrome://') && !url.startsWith('chrome-extension://');
+}
+
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    // Save previous tab
+    if (activeTabId !== null && activeUrl && startTime) {
+        saveStopTime(activeUrl);
     }
-}
 
-function getDayKey() {
-    const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-}
-
-// Save time spent on the last active tab
-function saveActiveTime() {
-    if (!activeTab || !activeStart) return;
-
-    chrome.tabs.get(activeTab, tab => {
-        if (chrome.runtime.lastError || !tab || !tab.url) return;
-
-        const hostname = getHostname(tab.url);
-        const dayKey = getDayKey();
-        const duration = Date.now() - activeStart;
-
-        chrome.storage.local.get(["timeData", "limits", "blockTypes", "objectives"], res => {
-            const timeData = res.timeData || {};
-            const limits = res.limits || {};
-            const blockTypes = res.blockTypes || {};
-            const objectives = res.objectives || {};
-
-            if (!timeData[dayKey]) timeData[dayKey] = {};
-            if (!timeData[dayKey][hostname]) timeData[dayKey][hostname] = 0;
-
-            timeData[dayKey][hostname] += duration;
-
-            chrome.storage.local.set({ timeData });
-
-            const spentMin = Math.floor(timeData[dayKey][hostname] / 60000);
-            const limit = limits[hostname];
-            const blockType = blockTypes[hostname];
-
-            if (limit !== undefined && spentMin >= limit) {
-                chrome.tabs.update(activeTab, { muted: true });
-
-                if (blockType === "hard") {
-                    chrome.tabs.sendMessage(activeTab, {
-                        action: "showHardBlock"
-                    });
-                } else {
-                    chrome.tabs.sendMessage(activeTab, {
-                        action: "showSoftBlock",
-                        objective: objectives[hostname] || null
-                    });
-                }
-            }
-        });
-    });
-
-    activeStart = Date.now();
-}
-
-// When you switch tabs
-chrome.tabs.onActivated.addListener(activeInfo => {
-    saveActiveTime();
-    activeTab = activeInfo.tabId;
-    activeStart = Date.now();
-
-    chrome.tabs.get(activeTab, tab => {
-        if (!tab || !tab.url) return;
-    });
+    // Start new tab
+    activeTabId = activeInfo.tabId;
+    const tab = await chrome.tabs.get(activeTabId);
+    if (!isValidUrl(tab.url)) {
+        activeUrl = null;
+        startTime = null;
+        return;
+    }
+    activeUrl = tab.url;
+    startTime = Date.now();
 });
 
-// When a tab finishes loading
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status !== "complete") return;
+    if (tabId === activeTabId && changeInfo.url && isValidUrl(changeInfo.url)) {
+        // Save old URL
+        if (activeUrl && startTime) saveStopTime(activeUrl);
 
-    saveActiveTime();
-    activeTab = tabId;
-    activeStart = Date.now();
-});
-
-// Handle soft block objective
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    const tabId = sender.tab?.id;
-    if (!tabId) return;
-
-    if (msg.action === "objectiveEntered") {
-        const hostname = msg.hostname;
-
-        chrome.storage.local.get(["objectives"], res => {
-            const objectives = res.objectives || {};
-            objectives[hostname] = msg.objective;
-
-            chrome.storage.local.set({ objectives }, () => {
-                chrome.tabs.update(tabId, { muted: false });
-
-                chrome.tabs.sendMessage(tabId, {
-                    action: "hideOverlay"
-                });
-
-                sendResponse({ ok: true });
-            });
-        });
-
-        return true;
-    }
-
-    if (msg.action === "setSiteSettings") {
-        const { hostname, limit, blockType } = msg;
-
-        chrome.storage.local.get(["limits", "blockTypes"], res => {
-            const limits = res.limits || {};
-            const blockTypes = res.blockTypes || {};
-
-            limits[hostname] = limit;
-            blockTypes[hostname] = blockType;
-
-            chrome.storage.local.set({ limits, blockTypes }, () => {
-                sendResponse({ ok: true });
-            });
-        });
-
-        return true;
+        // Start new URL
+        activeUrl = changeInfo.url;
+        startTime = Date.now();
     }
 });
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (tabId === activeTabId && activeUrl && startTime) {
+        saveStopTime(activeUrl);
+        activeTabId = null;
+        activeUrl = null;
+        startTime = null;
+    }
+});
+
+function saveStopTime(url) {
+    const stopTime = Date.now();
+    chrome.storage.local.get(['siteTimes'], (result) => {
+        const siteTimes = result.siteTimes || {};
+        if (!siteTimes[url]) siteTimes[url] = [];
+        siteTimes[url].push({ start: startTime, stop: stopTime });
+        chrome.storage.local.set({ siteTimes });
+        startTime = null; // reset startTime until next tab activation
+    });
+}
+
+// Function to calculate total minutes on a site
+function getMinutesForUrl(url, callback) {
+    chrome.storage.local.get(['siteTimes'], (result) => {
+        const siteTimes = result.siteTimes || {};
+        const times = siteTimes[url] || [];
+        let total = 0;
+        for (const t of times) {
+            if (t.start && t.stop) total += (t.stop - t.start);
+        }
+        callback(Math.floor(total / 60000)); // ms → minutes
+    });
+}
