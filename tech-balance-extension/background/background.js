@@ -1,6 +1,6 @@
 let activeTab = null;
 let activeStartTime = null;
-const SAVE_INTERVAL = 1000; // Save every 1 second
+const SAVE_INTERVAL = 5000; // Save every 5 seconds
 
 // Normalize URL to main domain
 function getDomain(url) {
@@ -44,7 +44,10 @@ function saveTime(tabId) {
             const limit = limits[domain];
             const mode = blockModes[domain] || "soft";
             if (limit !== undefined && Math.floor(data[domain] / 60000) >= limit) {
-                safeSend(tabId, { action: "applyBlock", mode });
+                // show break overlay
+                safeSend(tabId, { action: "showBreakOverlay" });
+
+                // blur/mute while overlay is up
                 chrome.tabs.update(tabId, { muted: true });
             }
         });
@@ -89,9 +92,17 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     }
 });
 
-// Listen for soft override messages from content scripts
+// Listen for user choices from content script
 chrome.runtime.onMessage.addListener((msg, sender) => {
-    if (msg.action === "soft_override" && sender.tab) {
+    if (!sender.tab) return;
+
+    if (msg.action === "takeBreak") {
+        chrome.tabs.remove(sender.tab.id); // close the tab
+    } else if (msg.action === "keepGoing") {
+        chrome.tabs.update(sender.tab.id, { muted: false });
+        // remove overlay via content script
+        chrome.tabs.sendMessage(sender.tab.id, { action: "removeOverlay" });
+    } else if (msg.action === "soft_override") {
         safeSend(sender.tab.id, {
             action: "show_goal_banner",
             goal: msg.goal
