@@ -3,10 +3,10 @@ let activeStartTime = null;
 
 function getTodayKey() {
     const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
-chrome.tabs.onActivated.addListener(async (info) => {
+chrome.tabs.onActivated.addListener((info) => {
     handleTabChange(info.tabId);
 });
 
@@ -16,7 +16,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     }
 });
 
-async function handleTabChange(tabId) {
+function handleTabChange(tabId) {
     if (activeTab !== null) {
         saveTime(activeTab);
     }
@@ -36,9 +36,10 @@ function saveTime(tabId) {
         const domain = new URL(tab.url).hostname;
         const dayKey = getTodayKey();
 
-        chrome.storage.local.get(["timeData", "limits"], (res) => {
+        chrome.storage.local.get(["timeData", "limits", "blockModes"], (res) => {
             const data = res.timeData || {};
             const limits = res.limits || {};
+            const blockModes = res.blockModes || {};
 
             if (!data[dayKey]) data[dayKey] = {};
             data[dayKey][domain] = (data[dayKey][domain] || 0) + duration;
@@ -46,15 +47,19 @@ function saveTime(tabId) {
             chrome.storage.local.set({ timeData: data });
 
             const limit = limits[domain];
+            const mode = blockModes[domain] || "soft"; // default = soft block
+
             if (limit !== undefined) {
                 const spentMin = Math.floor(data[dayKey][domain] / 60000);
+
                 if (spentMin >= limit) {
                     chrome.tabs.sendMessage(tabId, {
-                    action: "applyBlock",
-                    mode
-                });
-                chrome.tabs.update(tabId, { muted: true });
-            }
+                        action: "applyBlock",
+                        mode: mode
+                    });
+
+                    chrome.tabs.update(tabId, { muted: true });
+                }
             }
         });
     });
