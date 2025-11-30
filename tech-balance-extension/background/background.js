@@ -2,11 +2,12 @@ let activeTabId = null;
 let activeUrl = null;
 let startTime = null;
 
-// Helper: ignore chrome internal pages
+// Ignore internal Chrome pages
 function isValidUrl(url) {
     return url && !url.startsWith('chrome://') && !url.startsWith('chrome-extension://');
 }
 
+// Tab activated
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
     // Save previous tab
     if (activeTabId !== null && activeUrl && startTime) {
@@ -21,21 +22,21 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
         startTime = null;
         return;
     }
-    activeUrl = tab.url;
+    activeUrl = tab.url.replace(/^www\./, '');
     startTime = Date.now();
 });
 
+// Tab updated (URL change)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (tabId === activeTabId && changeInfo.url && isValidUrl(changeInfo.url)) {
-        // Save old URL
         if (activeUrl && startTime) saveStopTime(activeUrl);
 
-        // Start new URL
-        activeUrl = changeInfo.url;
+        activeUrl = changeInfo.url.replace(/^www\./, '');
         startTime = Date.now();
     }
 });
 
+// Tab closed
 chrome.tabs.onRemoved.addListener((tabId) => {
     if (tabId === activeTabId && activeUrl && startTime) {
         saveStopTime(activeUrl);
@@ -45,26 +46,26 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     }
 });
 
+// Save elapsed time to timeData in storage
 function saveStopTime(url) {
+    if (!startTime) return;
     const stopTime = Date.now();
-    chrome.storage.local.get(['siteTimes'], (result) => {
-        const siteTimes = result.siteTimes || {};
-        if (!siteTimes[url]) siteTimes[url] = [];
-        siteTimes[url].push({ start: startTime, stop: stopTime });
-        chrome.storage.local.set({ siteTimes });
-        startTime = null; // reset startTime until next tab activation
+    const elapsed = stopTime - startTime;
+
+    chrome.storage.local.get(['timeData'], (result) => {
+        const data = result.timeData || {};
+        if (!data[url]) data[url] = 0;
+        data[url] += elapsed;
+        chrome.storage.local.set({ timeData: data });
+        startTime = null;
     });
 }
 
-// Function to calculate total minutes on a site
+// Optional helper: calculate minutes for a site
 function getMinutesForUrl(url, callback) {
-    chrome.storage.local.get(['siteTimes'], (result) => {
-        const siteTimes = result.siteTimes || {};
-        const times = siteTimes[url] || [];
-        let total = 0;
-        for (const t of times) {
-            if (t.start && t.stop) total += (t.stop - t.start);
-        }
-        callback(Math.floor(total / 60000)); // ms → minutes
+    chrome.storage.local.get(['timeData'], (result) => {
+        const data = result.timeData || {};
+        const ms = data[url] || 0;
+        callback(Math.floor(ms / 60000));
     });
 }
