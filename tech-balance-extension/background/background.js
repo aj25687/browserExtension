@@ -24,6 +24,16 @@ function handleTabChange(tabId) {
     activeStartTime = Date.now();
 }
 
+function safeSend(tabId, msg) {
+    chrome.tabs.sendMessage(tabId, msg, () => {
+        if (chrome.runtime.lastError) {
+            // The tab probably doesn't have the script loaded
+            // or the tabId is invalid.
+            // We silently ignore this instead of crashing.
+        }
+    });
+}
+
 function saveTime(tabId) {
     if (!activeStartTime) return;
 
@@ -31,6 +41,7 @@ function saveTime(tabId) {
     activeStartTime = null;
 
     chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError) return;  // tab died
         if (!tab || !tab.url) return;
 
         const domain = new URL(tab.url).hostname;
@@ -47,13 +58,13 @@ function saveTime(tabId) {
             chrome.storage.local.set({ timeData: data });
 
             const limit = limits[domain];
-            const mode = blockModes[domain] || "soft"; // default = soft block
+            const mode = blockModes[domain] || "soft";
 
             if (limit !== undefined) {
                 const spentMin = Math.floor(data[dayKey][domain] / 60000);
 
                 if (spentMin >= limit) {
-                    chrome.tabs.sendMessage(tabId, {
+                    safeSend(tabId, {
                         action: "applyBlock",
                         mode: mode
                     });
@@ -67,7 +78,8 @@ function saveTime(tabId) {
 
 chrome.runtime.onMessage.addListener((msg, sender) => {
     if (msg.action === "soft_override") {
-        chrome.tabs.sendMessage(sender.tab.id, {
+        if (!sender.tab) return;
+        safeSend(sender.tab.id, {
             action: "show_goal_banner",
             goal: msg.goal
         });
