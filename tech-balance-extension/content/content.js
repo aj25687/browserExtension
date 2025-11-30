@@ -1,27 +1,3 @@
-console.log("Content script running:", location.hostname);
-
-let blurLayer = null;
-let popupContainer = null;
-let goalBanner = null;
-
-// === APPLY BLUR ===
-function injectBlur() {
-    if (blurLayer) return;
-
-    blurLayer = document.createElement("div");
-    blurLayer.style.position = "fixed";
-    blurLayer.style.top = "0";
-    blurLayer.style.left = "0";
-    blurLayer.style.width = "100vw";
-    blurLayer.style.height = "100vh";
-    blurLayer.style.backdropFilter = "blur(12px)";
-    blurLayer.style.background = "rgba(0,0,0,0.4)";
-    blurLayer.style.zIndex = "999999";
-    blurLayer.style.pointerEvents = "none";
-    document.body.appendChild(blurLayer);
-}
-
-// === POPUP ===
 function injectPopup(mode) {
     if (popupContainer) return;
 
@@ -62,64 +38,16 @@ function injectPopup(mode) {
 
     document.body.appendChild(popupContainer);
 
-    const continueBtn = document.getElementById("continueBtn");
-    const breakBtn = document.getElementById("breakBtn");
+    document.getElementById("continueBtn").onclick = () => {
+        if (mode === "soft") {
+            const goal = document.getElementById("goalInput").value.trim();
+            chrome.runtime.sendMessage({ action: "soft_override", goal });
+        }
 
-    if (continueBtn) {
-        continueBtn.onclick = () => {
-            if (mode === "soft") {
-                const goal = document.getElementById("goalInput").value.trim();
-                chrome.runtime.sendMessage({ action: "soft_override", goal });
-            }
-            chrome.runtime.sendMessage({ action: "nudge_continue" });
-        };
-    }
+        chrome.runtime.sendMessage({ action: "nudge_continue" });
+    };
 
-    breakBtn.onclick = () => {
+    document.getElementById("breakBtn").onclick = () => {
         chrome.runtime.sendMessage({ action: "nudge_break" });
     };
 }
-
-// === GOAL BANNER ===
-function injectGoalBanner(text) {
-    if (goalBanner) goalBanner.remove();
-
-    goalBanner = document.createElement("div");
-    goalBanner.textContent = text;
-    goalBanner.style.position = "fixed";
-    goalBanner.style.top = "0";
-    goalBanner.style.left = "0";
-    goalBanner.style.width = "100%";
-    goalBanner.style.padding = "10px";
-    goalBanner.style.background = "#222";
-    goalBanner.style.color = "white";
-    goalBanner.style.fontSize = "16px";
-    goalBanner.style.textAlign = "center";
-    goalBanner.style.zIndex = "1000001";
-    goalBanner.style.pointerEvents = "none";
-
-    document.body.appendChild(goalBanner);
-}
-
-// === LISTENER ===
-chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.action === "applyBlock") {
-        injectBlur();
-        injectPopup(msg.mode);
-    }
-
-    if (msg.action === "nudge_continue") {
-        if (blurLayer) blurLayer.remove();
-        if (popupContainer) popupContainer.remove();
-        blurLayer = null;
-        popupContainer = null;
-    }
-
-    if (msg.action === "nudge_break") {
-        location.href = "about:blank";
-    }
-
-    if (msg.action === "show_goal_banner") {
-        injectGoalBanner(msg.goal);
-    }
-});
