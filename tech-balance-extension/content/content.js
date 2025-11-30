@@ -2,7 +2,9 @@ console.log("Content script running:", location.hostname);
 
 let blurLayer = null;
 let popupContainer = null;
+let goalBanner = null;
 
+// === APPLY BLUR ===
 function injectBlur() {
     if (blurLayer) return;
 
@@ -19,10 +21,20 @@ function injectBlur() {
     document.body.appendChild(blurLayer);
 }
 
-function injectBreakPopup() {
+// === POPUP ===
+function injectPopup(mode) {
     if (popupContainer) return;
 
     popupContainer = document.createElement("div");
+
+    let extraContent = "";
+    if (mode === "soft") {
+        extraContent = `
+            <input id="goalInput" placeholder="What are you here to do?"
+            style="width: 90%; padding: 8px; margin-top: 10px;"/>
+        `;
+    }
+
     popupContainer.innerHTML = `
         <div style="
             position: fixed;
@@ -33,33 +45,67 @@ function injectBreakPopup() {
             padding: 20px;
             border-radius: 10px;
             z-index: 1000000;
-            pointer-events: auto;
             text-align: center;
+            pointer-events: auto;
         ">
-            <h2>Take a break?</h2>
-            <button id="breakContinue">Keep Going</button>
-            <button id="breakStop">Take Break</button>
+            <h2>${mode === "hard" ? "Time's up." : "Take a break?"}</h2>
+
+            ${extraContent}
+
+            <button id="continueBtn" ${mode === "hard" ? "disabled style='opacity:0.5; cursor:not-allowed;'" : ""}>
+                Keep Going
+            </button>
+
+            <button id="breakBtn">Take Break</button>
         </div>
     `;
 
     document.body.appendChild(popupContainer);
 
-    document.getElementById("breakContinue").onclick = () => {
-        blurLayer.remove();
-        blurLayer = null;
-        popupContainer.remove();
-        popupContainer = null;
-    };
+    const continueBtn = document.getElementById("continueBtn");
+    const breakBtn = document.getElementById("breakBtn");
 
-    document.getElementById("breakStop").onclick = () => {
-        location.href = "about:blank";
+    if (continueBtn) {
+        continueBtn.onclick = () => {
+            if (mode === "soft") {
+                const goal = document.getElementById("goalInput").value.trim();
+                chrome.runtime.sendMessage({ action: "soft_override", goal });
+            }
+            chrome.runtime.sendMessage({ action: "nudge_continue" });
+        };
+    }
+
+    breakBtn.onclick = () => {
+        chrome.runtime.sendMessage({ action: "nudge_break" });
     };
 }
 
+// === GOAL BANNER ===
+function injectGoalBanner(text) {
+    if (goalBanner) goalBanner.remove();
+
+    goalBanner = document.createElement("div");
+    goalBanner.textContent = text;
+    goalBanner.style.position = "fixed";
+    goalBanner.style.top = "0";
+    goalBanner.style.left = "0";
+    goalBanner.style.width = "100%";
+    goalBanner.style.padding = "10px";
+    goalBanner.style.background = "#222";
+    goalBanner.style.color = "white";
+    goalBanner.style.fontSize = "16px";
+    goalBanner.style.textAlign = "center";
+    goalBanner.style.zIndex = "1000001";
+    goalBanner.style.pointerEvents = "none";
+
+    document.body.appendChild(goalBanner);
+}
+
+// === LISTENER ===
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === "applyBlock") {
         injectBlur();
-        injectBreakPopup();
+        injectPopup(msg.mode);
     }
 
     if (msg.action === "nudge_continue") {
@@ -72,4 +118,8 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === "nudge_break") {
         location.href = "about:blank";
     }
-});;
+
+    if (msg.action === "show_goal_banner") {
+        injectGoalBanner(msg.goal);
+    }
+});

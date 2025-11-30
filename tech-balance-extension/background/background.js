@@ -49,10 +49,22 @@ function saveTime(tabId) {
             if (limit !== undefined) {
                 const spentMin = Math.floor(data[dayKey][domain] / 60000);
                 if (spentMin >= limit) {
-                    chrome.tabs.sendMessage(tabId, { action: "applyBlock" });
-                    chrome.tabs.update(tabId, { muted: true });
-                }
+                    chrome.tabs.sendMessage(tabId, {
+                    action: "applyBlock",
+                    mode
+                });
+                chrome.tabs.update(tabId, { muted: true });
+            }
             }
         });
     });
 }
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (msg.action === "soft_override") {
+        chrome.tabs.sendMessage(sender.tab.id, {
+            action: "show_goal_banner",
+            goal: msg.goal
+        });
+    }
+});
