@@ -1,13 +1,13 @@
 let activeTabId = null;
-let activeUrl = null;
+let activeDomain = null;
 let startTime = null;
 
-// Ignore internal Chrome pages
+// Only valid HTTP/HTTPS pages
 function isValidUrl(url) {
-    return url && !url.startsWith('chrome://') && !url.startsWith('chrome-extension://');
+    return url && (url.startsWith("http://") || url.startsWith("https://"));
 }
 
-// Normalize URL to main domain (no www, no path)
+// Extract main domain (hostname, no www)
 function getDomain(url) {
     try {
         const hostname = new URL(url).hostname;
@@ -17,63 +17,61 @@ function getDomain(url) {
     }
 }
 
-// Tab activated
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    if (activeTabId !== null && activeUrl && startTime) {
-        saveStopTime(activeUrl);
-    }
-
-    activeTabId = activeInfo.tabId;
-    const tab = await chrome.tabs.get(activeTabId);
-    if (!isValidUrl(tab.url)) {
-        activeUrl = null;
-        startTime = null;
-        return;
-    }
-    activeUrl = getDomain(tab.url);
-    startTime = Date.now();
-});
-
-// Tab updated (URL change)
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (tabId === activeTabId && changeInfo.url && isValidUrl(changeInfo.url)) {
-        if (activeUrl && startTime) saveStopTime(activeUrl);
-
-        activeUrl = getDomain(changeInfo.url);
-        startTime = Date.now();
-    }
-});
-
-// Tab closed
-chrome.tabs.onRemoved.addListener((tabId) => {
-    if (tabId === activeTabId && activeUrl && startTime) {
-        saveStopTime(activeUrl);
-        activeTabId = null;
-        activeUrl = null;
-        startTime = null;
-    }
-});
-
-// Save elapsed time to timeData in storage
-function saveStopTime(url) {
-    if (!startTime || !url) return;
+// Save elapsed time for a domain
+function saveStopTime(domain) {
+    if (!startTime || !domain) return;
     const stopTime = Date.now();
     const elapsed = stopTime - startTime;
 
     chrome.storage.local.get(['timeData'], (result) => {
         const data = result.timeData || {};
-        if (!data[url]) data[url] = 0;
-        data[url] += elapsed;
+        if (!data[domain]) data[domain] = 0;
+        data[domain] += elapsed;
         chrome.storage.local.set({ timeData: data });
         startTime = null;
     });
 }
 
-// Optional helper: calculate minutes for a site
-function getMinutesForUrl(url, callback) {
-    chrome.storage.local.get(['timeData'], (result) => {
-        const data = result.timeData || {};
-        const ms = data[url] || 0;
-        callback(Math.floor(ms / 60000));
-    });
-}
+// Handle tab activation
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    if (activeTabId !== null && activeDomain && startTime) {
+        saveStopTime(activeDomain);
+    }
+
+    activeTabId = activeInfo.tabId;
+    const tab = await chrome.tabs.get(activeTabId);
+    if (!isValidUrl(tab.url)) {
+        activeDomain = null;
+        startTime = null;
+        return;
+    }
+
+    activeDomain = getDomain(tab.url);
+    startTime = Date.now();
+});
+
+// Handle tab updates (like navigation)
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (tabId !== activeTabId) return;
+    if (!changeInfo.url || !isValidUrl(changeInfo.url)) return;
+
+    const newDomain = getDomain(changeInfo.url);
+    if (!newDomain || newDomain === activeDomain) return; // same domain, ignore
+
+    // Save old domain time
+    if (activeDomain && startTime) saveStopTime(activeDomain);
+
+    // Start tracking new domain
+    activeDomain = newDomain;
+    startTime = Date.now();
+});
+
+// Handle tab closure
+chrome.tabs.onRemoved.addListener((tabId) => {
+    if (tabId === activeTabId && activeDomain && startTime) {
+        saveStopTime(activeDomain);
+        activeTabId = null;
+        activeDomain = null;
+        startTime = null;
+    }
+});
