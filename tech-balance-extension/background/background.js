@@ -107,10 +107,11 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
             const domain = getDomain(tab.url);
             if (!domain) return;
 
-            // update limit
+            // Add new limit to existing limit
             chrome.storage.local.get(["limits"], (res) => {
                 const limits = res.limits || {};
-                limits[domain] = msg.newLimit;
+                const oldLimit = limits[domain] || 0;
+                limits[domain] = oldLimit + msg.newLimit;
                 chrome.storage.local.set({ limits });
             });
 

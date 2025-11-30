@@ -66,9 +66,9 @@ function askGoalAndNewLimit() {
     overlay.style.zIndex = "999999";
 
     overlay.innerHTML = `
-        <h2>Set your goal and new limit</h2>
+        <h2>Set your goal and additional limit</h2>
         <input id="goalInput" type="text" placeholder="Your goal..." style="margin:5px;padding:5px;width:200px;">
-        <input id="limitInput" type="number" placeholder="New limit in minutes" style="margin:5px;padding:5px;width:200px;">
+        <input id="limitInput" type="number" placeholder="Add minutes to limit" style="margin:5px;padding:5px;width:200px;">
         <button id="saveGoalLimit" style="margin:10px;padding:10px 20px;">Save and continue</button>
     `;
 
