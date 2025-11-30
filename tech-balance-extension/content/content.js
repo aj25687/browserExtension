@@ -6,7 +6,6 @@ chrome.runtime.onMessage.addListener((msg) => {
     } else if (msg.action === "removeOverlay") {
         removeOverlay();
     } else if (msg.action === "show_goal_banner") {
-        // optional: your existing goal overlay
         showGoalBanner(msg.goal);
     }
 });

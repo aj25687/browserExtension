@@ -11,13 +11,6 @@ function getDomain(url) {
     }
 }
 
-// Send message safely
-function safeSend(tabId, msg) {
-    chrome.tabs.sendMessage(tabId, msg, () => {
-        if (chrome.runtime.lastError) {}
-    });
-}
-
 // Save elapsed time for a tab
 function saveTime(tabId) {
     if (!activeStartTime) return;
@@ -43,11 +36,20 @@ function saveTime(tabId) {
             // check limit
             const limit = limits[domain];
             const mode = blockModes[domain] || "soft";
-            if (limit !== undefined && Math.floor(data[domain] / 60000) >= limit) {
-                // show break overlay
-                safeSend(tabId, { action: "showBreakOverlay" });
+            const spentMin = Math.floor(data[domain] / 60000);
 
-                // blur/mute while overlay is up
+            console.log(`Domain: ${domain}, spent: ${spentMin} min, limit: ${limit}`);
+
+            if (limit !== undefined && spentMin >= limit) {
+                // inject content script dynamically and show overlay
+                chrome.scripting.executeScript({
+                    target: { tabId },
+                    files: ["content.js"]
+                }, () => {
+                    chrome.tabs.sendMessage(tabId, { action: "showBreakOverlay" });
+                });
+
+                // mute the tab while overlay is up
                 chrome.tabs.update(tabId, { muted: true });
             }
         });
@@ -103,7 +105,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         // remove overlay via content script
         chrome.tabs.sendMessage(sender.tab.id, { action: "removeOverlay" });
     } else if (msg.action === "soft_override") {
-        safeSend(sender.tab.id, {
+        chrome.tabs.sendMessage(sender.tab.id, {
             action: "show_goal_banner",
             goal: msg.goal
         });
