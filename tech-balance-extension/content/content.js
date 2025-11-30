@@ -42,8 +42,54 @@ function showBreakOverlay() {
         chrome.runtime.sendMessage({ action: "takeBreak" });
         removeOverlay();
     };
+
     document.getElementById("keepGoing").onclick = () => {
-        chrome.runtime.sendMessage({ action: "keepGoing" });
+        removeOverlay();
+        askGoalAndNewLimit();
+    };
+}
+
+// Ask for goal + new temporary limit
+function askGoalAndNewLimit() {
+    overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.top = 0;
+    overlay.style.left = 0;
+    overlay.style.width = "100%";
+    overlay.style.height = "100%";
+    overlay.style.background = "rgba(255,255,255,0.95)";
+    overlay.style.backdropFilter = "blur(6px)";
+    overlay.style.display = "flex";
+    overlay.style.flexDirection = "column";
+    overlay.style.justifyContent = "center";
+    overlay.style.alignItems = "center";
+    overlay.style.zIndex = "999999";
+
+    overlay.innerHTML = `
+        <h2>Set your goal and new limit</h2>
+        <input id="goalInput" type="text" placeholder="Your goal..." style="margin:5px;padding:5px;width:200px;">
+        <input id="limitInput" type="number" placeholder="New limit in minutes" style="margin:5px;padding:5px;width:200px;">
+        <button id="saveGoalLimit" style="margin:10px;padding:10px 20px;">Save and continue</button>
+    `;
+
+    document.body.appendChild(overlay);
+
+    document.getElementById("saveGoalLimit").onclick = () => {
+        const goal = document.getElementById("goalInput").value.trim();
+        const newLimit = Number(document.getElementById("limitInput").value);
+
+        if (!goal || isNaN(newLimit) || newLimit <= 0) {
+            alert("Enter a goal and a valid number for new limit!");
+            return;
+        }
+
+        // send to background to save
+        chrome.runtime.sendMessage({
+            action: "updateGoalAndLimit",
+            goal,
+            newLimit
+        });
+
         removeOverlay();
     };
 }
@@ -53,31 +99,4 @@ function removeOverlay() {
         overlay.remove();
         overlay = null;
     }
-}
-
-// Optional soft override / goal banner
-function showGoalBanner(goal) {
-    removeOverlay();
-    overlay = document.createElement("div");
-    overlay.style.position = "fixed";
-    overlay.style.top = 0;
-    overlay.style.left = 0;
-    overlay.style.width = "100%";
-    overlay.style.height = "100%";
-    overlay.style.background = "rgba(255,255,255,0.9)";
-    overlay.style.backdropFilter = "blur(6px)";
-    overlay.style.display = "flex";
-    overlay.style.flexDirection = "column";
-    overlay.style.justifyContent = "center";
-    overlay.style.alignItems = "center";
-    overlay.style.zIndex = "999999";
-
-    overlay.innerHTML = `
-        <h2>Time limit reached</h2>
-        <p>Your goal: ${goal}</p>
-        <button id="continueBtn" style="margin:5px;padding:10px 20px;">Continue</button>
-    `;
-
-    document.body.appendChild(overlay);
-    document.getElementById("continueBtn").onclick = () => removeOverlay();
 }
