@@ -1,112 +1,5 @@
-// Track time per hostname
-const siteState = {};  
-// Example structure:
-// siteState["youtube.com"] = {
-//     timeSpent: 0,
-//     limit: 120,
-//     blockType: "soft",
-//     objective: null,
-//     timer: null
-// };
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (!tab.url || changeInfo.status !== "complete") return;
-    handleTab(tabId, tab.url);
-});
-
-chrome.tabs.onActivated.addListener(active => {
-    chrome.tabs.get(active.tabId, tab => {
-        if (chrome.runtime.lastError || !tab || !tab.url) return;
-        handleTab(tab.id, tab.url);
-    });
-});
-
-// MAIN HANDLER
-function handleTab(tabId, url) {
-    const hostname = getHostname(url);
-    if (!siteState[hostname]) return;
-
-    startTimer(tabId, hostname);
-}
-
-function startTimer(tabId, hostname) {
-    const state = siteState[hostname];
-    if (!state) return;
-
-    if (state.timer) clearInterval(state.timer);
-
-    state.timer = setInterval(() => {
-        state.timeSpent++;
-
-        // Soft block
-        if (state.blockType === "soft" && state.timeSpent >= state.limit) {
-            activateSoftBlock(tabId, hostname);
-        }
-
-        // Hard block
-        if (state.blockType === "hard") {
-            activateHardBlock(tabId, hostname);
-        }
-
-    }, 1000);
-}
-
-function activateSoftBlock(tabId, hostname) {
-    const state = siteState[hostname];
-
-    chrome.tabs.update(tabId, { muted: true });
-
-    chrome.tabs.sendMessage(tabId, {
-        action: "showSoftBlock",
-        objective: state.objective
-    });
-}
-
-function activateHardBlock(tabId, hostname) {
-    chrome.tabs.update(tabId, { muted: true });
-
-    chrome.tabs.sendMessage(tabId, {
-        action: "showHardBlock"
-    });
-}
-
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    const tabId = sender.tab?.id;
-    if (!tabId) return;
-
-    if (msg.action === "setSiteSettings") {
-        const { hostname, limit, blockType } = msg;
-
-        siteState[hostname] = {
-            timeSpent: 0,
-            limit,
-            blockType,
-            objective: null,
-            timer: null
-        };
-
-        sendResponse({ ok: true });
-        return;
-    }
-
-    if (msg.action === "objectiveEntered") {
-        const hostname = msg.hostname;
-        const objective = msg.objective;
-
-        if (!siteState[hostname]) return;
-
-        siteState[hostname].objective = objective;
-
-        chrome.tabs.update(tabId, { muted: false });
-
-        chrome.tabs.sendMessage(tabId, {
-            action: "hideOverlay"
-        });
-
-        sendResponse({ ok: true });
-        return;
-    }
-});
+let activeTab = null;
+let activeStart = null;
 
 function getHostname(url) {
     try {
@@ -115,3 +8,121 @@ function getHostname(url) {
         return "";
     }
 }
+
+function getDayKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+// Save time spent on the last active tab
+function saveActiveTime() {
+    if (!activeTab || !activeStart) return;
+
+    chrome.tabs.get(activeTab, tab => {
+        if (chrome.runtime.lastError || !tab || !tab.url) return;
+
+        const hostname = getHostname(tab.url);
+        const dayKey = getDayKey();
+        const duration = Date.now() - activeStart;
+
+        chrome.storage.local.get(["timeData", "limits", "blockTypes", "objectives"], res => {
+            const timeData = res.timeData || {};
+            const limits = res.limits || {};
+            const blockTypes = res.blockTypes || {};
+            const objectives = res.objectives || {};
+
+            if (!timeData[dayKey]) timeData[dayKey] = {};
+            if (!timeData[dayKey][hostname]) timeData[dayKey][hostname] = 0;
+
+            timeData[dayKey][hostname] += duration;
+
+            chrome.storage.local.set({ timeData });
+
+            const spentMin = Math.floor(timeData[dayKey][hostname] / 60000);
+            const limit = limits[hostname];
+            const blockType = blockTypes[hostname];
+
+            if (limit !== undefined && spentMin >= limit) {
+                chrome.tabs.update(activeTab, { muted: true });
+
+                if (blockType === "hard") {
+                    chrome.tabs.sendMessage(activeTab, {
+                        action: "showHardBlock"
+                    });
+                } else {
+                    chrome.tabs.sendMessage(activeTab, {
+                        action: "showSoftBlock",
+                        objective: objectives[hostname] || null
+                    });
+                }
+            }
+        });
+    });
+
+    activeStart = Date.now();
+}
+
+// When you switch tabs
+chrome.tabs.onActivated.addListener(activeInfo => {
+    saveActiveTime();
+    activeTab = activeInfo.tabId;
+    activeStart = Date.now();
+
+    chrome.tabs.get(activeTab, tab => {
+        if (!tab || !tab.url) return;
+    });
+});
+
+// When a tab finishes loading
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status !== "complete") return;
+
+    saveActiveTime();
+    activeTab = tabId;
+    activeStart = Date.now();
+});
+
+// Handle soft block objective
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    const tabId = sender.tab?.id;
+    if (!tabId) return;
+
+    if (msg.action === "objectiveEntered") {
+        const hostname = msg.hostname;
+
+        chrome.storage.local.get(["objectives"], res => {
+            const objectives = res.objectives || {};
+            objectives[hostname] = msg.objective;
+
+            chrome.storage.local.set({ objectives }, () => {
+                chrome.tabs.update(tabId, { muted: false });
+
+                chrome.tabs.sendMessage(tabId, {
+                    action: "hideOverlay"
+                });
+
+                sendResponse({ ok: true });
+            });
+        });
+
+        return true;
+    }
+
+    if (msg.action === "setSiteSettings") {
+        const { hostname, limit, blockType } = msg;
+
+        chrome.storage.local.get(["limits", "blockTypes"], res => {
+            const limits = res.limits || {};
+            const blockTypes = res.blockTypes || {};
+
+            limits[hostname] = limit;
+            blockTypes[hostname] = blockType;
+
+            chrome.storage.local.set({ limits, blockTypes }, () => {
+                sendResponse({ ok: true });
+            });
+        });
+
+        return true;
+    }
+});
