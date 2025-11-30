@@ -41,13 +41,8 @@ function saveTime(tabId) {
             console.log(`Domain: ${domain}, spent: ${spentMin} min, limit: ${limit}`);
 
             if (limit !== undefined && spentMin >= limit) {
-                // inject content script dynamically and show overlay
-                chrome.scripting.executeScript({
-                    target: { tabId },
-                    files: ["content.js"]
-                }, () => {
-                    chrome.tabs.sendMessage(tabId, { action: "showBreakOverlay" });
-                });
+                // send overlay message
+                chrome.tabs.sendMessage(tabId, { action: "showBreakOverlay" });
 
                 // mute the tab while overlay is up
                 chrome.tabs.update(tabId, { muted: true });
@@ -102,7 +97,6 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         chrome.tabs.remove(sender.tab.id); // close the tab
     } else if (msg.action === "keepGoing") {
         chrome.tabs.update(sender.tab.id, { muted: false });
-        // remove overlay via content script
         chrome.tabs.sendMessage(sender.tab.id, { action: "removeOverlay" });
     } else if (msg.action === "soft_override") {
         chrome.tabs.sendMessage(sender.tab.id, {
