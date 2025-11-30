@@ -1,5 +1,8 @@
 let overlay = null;
 
+// Notify background that content.js is loaded
+chrome.runtime.sendMessage({ action: "contentReady" });
+
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg.action === "showBreakOverlay") {
         showBreakOverlay();
@@ -52,7 +55,7 @@ function removeOverlay() {
     }
 }
 
-// Optional: existing soft override / goal banner
+// Optional soft override / goal banner
 function showGoalBanner(goal) {
     removeOverlay();
     overlay = document.createElement("div");

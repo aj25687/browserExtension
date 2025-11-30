@@ -1,6 +1,7 @@
 let activeTab = null;
 let activeStartTime = null;
 const SAVE_INTERVAL = 5000; // Save every 5 seconds
+const readyTabs = new Set(); // tabs that have content.js loaded
 
 // Normalize URL to main domain
 function getDomain(url) {
@@ -41,14 +42,20 @@ function saveTime(tabId) {
             console.log(`Domain: ${domain}, spent: ${spentMin} min, limit: ${limit}`);
 
             if (limit !== undefined && spentMin >= limit) {
-                // send overlay message
-                chrome.tabs.sendMessage(tabId, { action: "showBreakOverlay" });
-
-                // mute the tab while overlay is up
-                chrome.tabs.update(tabId, { muted: true });
+                showOverlay(tabId);
             }
         });
     });
+}
+
+// Show overlay if content.js is ready
+function showOverlay(tabId) {
+    if (!readyTabs.has(tabId)) {
+        console.log("Tab not ready, skipping overlay:", tabId);
+        return;
+    }
+    chrome.tabs.sendMessage(tabId, { action: "showBreakOverlay" });
+    chrome.tabs.update(tabId, { muted: true });
 }
 
 // Handle tab activation
@@ -69,6 +76,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 
 // Handle tab removal
 chrome.tabs.onRemoved.addListener(tabId => {
+    readyTabs.delete(tabId);
     if (tabId === activeTab) {
         saveTime(tabId);
         activeTab = null;
@@ -89,12 +97,17 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     }
 });
 
-// Listen for user choices from content script
+// Listen for messages from content.js
 chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (msg.action === "contentReady") {
+        if (sender.tab && sender.tab.id) readyTabs.add(sender.tab.id);
+        return;
+    }
+
     if (!sender.tab) return;
 
     if (msg.action === "takeBreak") {
-        chrome.tabs.remove(sender.tab.id); // close the tab
+        chrome.tabs.remove(sender.tab.id);
     } else if (msg.action === "keepGoing") {
         chrome.tabs.update(sender.tab.id, { muted: false });
         chrome.tabs.sendMessage(sender.tab.id, { action: "removeOverlay" });
