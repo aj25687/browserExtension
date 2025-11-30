@@ -1,20 +1,8 @@
 let activeTab = null;
 let activeStartTime = null;
+const SAVE_INTERVAL = 1000; // Save every 1 second
 
-// record time every X ms even if tab is active
-const SAVE_INTERVAL = 5000; // 5 seconds
-
-function getTodayKey() {
-    const d = new Date();
-    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-}
-
-function safeSend(tabId, msg) {
-    chrome.tabs.sendMessage(tabId, msg, () => {
-        if (chrome.runtime.lastError) {}
-    });
-}
-
+// Normalize URL to main domain
 function getDomain(url) {
     try {
         return new URL(url).hostname.replace(/^www\./, "");
@@ -23,78 +11,90 @@ function getDomain(url) {
     }
 }
 
-async function handleTabChange(tabId) {
-    // save time for previous tab
-    if (activeTab !== null && activeStartTime) {
-        await saveTime(activeTab);
-    }
-
-    activeTab = tabId;
-    activeStartTime = Date.now();
+// Send message safely
+function safeSend(tabId, msg) {
+    chrome.tabs.sendMessage(tabId, msg, () => {
+        if (chrome.runtime.lastError) {}
+    });
 }
 
-// save elapsed time for tabId
+// Save elapsed time for a tab
 function saveTime(tabId) {
-    return new Promise((resolve) => {
-        if (!activeStartTime) return resolve();
+    if (!activeStartTime) return;
 
-        const duration = Date.now() - activeStartTime;
-        activeStartTime = Date.now(); // reset start time
+    const duration = Date.now() - activeStartTime;
+    activeStartTime = Date.now(); // reset timer
 
-        chrome.tabs.get(tabId, (tab) => {
-            if (chrome.runtime.lastError || !tab || !tab.url) return resolve();
+    chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab || !tab.url) return;
 
-            const domain = getDomain(tab.url);
-            if (!domain) return resolve();
+        const domain = getDomain(tab.url);
+        if (!domain) return;
 
-            const dayKey = getTodayKey();
+        chrome.storage.local.get(["timeData", "limits", "blockModes"], (res) => {
+            const data = res.timeData || {};
+            const limits = res.limits || {};
+            const blockModes = res.blockModes || {};
 
-            chrome.storage.local.get(["timeData", "limits", "blockModes"], (res) => {
-                const data = res.timeData || {};
-                const limits = res.limits || {};
-                const blockModes = res.blockModes || {};
+            // accumulate time per domain
+            data[domain] = (data[domain] || 0) + duration;
+            chrome.storage.local.set({ timeData: data });
 
-                if (!data[dayKey]) data[dayKey] = {};
-                data[dayKey][domain] = (data[dayKey][domain] || 0) + duration;
-
-                chrome.storage.local.set({ timeData: data });
-
-                const limit = limits[domain];
-                const mode = blockModes[domain] || "soft";
-
-                if (limit !== undefined) {
-                    const spentMin = Math.floor(data[dayKey][domain] / 60000);
-
-                    if (spentMin >= limit) {
-                        safeSend(tabId, { action: "applyBlock", mode });
-                        chrome.tabs.update(tabId, { muted: true });
-                    }
-                }
-
-                resolve();
-            });
+            // check limit
+            const limit = limits[domain];
+            const mode = blockModes[domain] || "soft";
+            if (limit !== undefined && Math.floor(data[domain] / 60000) >= limit) {
+                safeSend(tabId, { action: "applyBlock", mode });
+                chrome.tabs.update(tabId, { muted: true });
+            }
         });
     });
 }
 
-// listen to tab changes
-chrome.tabs.onActivated.addListener(info => handleTabChange(info.tabId));
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.status === "complete") handleTabChange(tabId);
-});
-chrome.tabs.onRemoved.addListener((tabId) => {
-    if (tabId === activeTab) saveTime(tabId).then(() => {
-        activeTab = null;
-        activeStartTime = null;
-    });
+// Handle tab activation
+chrome.tabs.onActivated.addListener(info => {
+    if (activeTab !== null) saveTime(activeTab);
+    activeTab = info.tabId;
+    activeStartTime = Date.now();
 });
 
-// periodically save active tab time
+// Handle tab updates (navigation, reload)
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === "complete") {
+        if (activeTab !== null) saveTime(activeTab);
+        activeTab = tabId;
+        activeStartTime = Date.now();
+    }
+});
+
+// Handle tab removal
+chrome.tabs.onRemoved.addListener(tabId => {
+    if (tabId === activeTab) {
+        saveTime(tabId);
+        activeTab = null;
+        activeStartTime = null;
+    }
+});
+
+// Periodically save active tab time
 setInterval(() => {
     if (activeTab !== null) saveTime(activeTab);
 }, SAVE_INTERVAL);
 
-// initialize: find the currently active tab when extension loads
+// Initialize: track current active tab on load
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) handleTabChange(tabs[0].id);
+    if (tabs[0]) {
+        activeTab = tabs[0].id;
+        activeStartTime = Date.now();
+    }
+});
+
+// Listen for soft override messages from content scripts
+chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (msg.action === "soft_override" && sender.tab) {
+        safeSend(sender.tab.id, {
+            action: "show_goal_banner",
+            goal: msg.goal
+        });
+    }
 });
