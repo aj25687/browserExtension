@@ -7,14 +7,22 @@ function isValidUrl(url) {
     return url && !url.startsWith('chrome://') && !url.startsWith('chrome-extension://');
 }
 
+// Normalize URL to main domain (no www, no path)
+function getDomain(url) {
+    try {
+        const hostname = new URL(url).hostname;
+        return hostname.replace(/^www\./, '');
+    } catch (e) {
+        return null;
+    }
+}
+
 // Tab activated
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    // Save previous tab
     if (activeTabId !== null && activeUrl && startTime) {
         saveStopTime(activeUrl);
     }
 
-    // Start new tab
     activeTabId = activeInfo.tabId;
     const tab = await chrome.tabs.get(activeTabId);
     if (!isValidUrl(tab.url)) {
@@ -22,7 +30,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
         startTime = null;
         return;
     }
-    activeUrl = tab.url.replace(/^www\./, '');
+    activeUrl = getDomain(tab.url);
     startTime = Date.now();
 });
 
@@ -31,7 +39,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (tabId === activeTabId && changeInfo.url && isValidUrl(changeInfo.url)) {
         if (activeUrl && startTime) saveStopTime(activeUrl);
 
-        activeUrl = changeInfo.url.replace(/^www\./, '');
+        activeUrl = getDomain(changeInfo.url);
         startTime = Date.now();
     }
 });
@@ -48,7 +56,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Save elapsed time to timeData in storage
 function saveStopTime(url) {
-    if (!startTime) return;
+    if (!startTime || !url) return;
     const stopTime = Date.now();
     const elapsed = stopTime - startTime;
 
