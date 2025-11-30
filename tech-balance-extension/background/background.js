@@ -1,77 +1,87 @@
-let activeTabId = null;
-let activeDomain = null;
-let startTime = null;
+let activeTab = null;
+let activeStartTime = null;
 
-// Only valid HTTP/HTTPS pages
-function isValidUrl(url) {
-    return url && (url.startsWith("http://") || url.startsWith("https://"));
+function getTodayKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
-// Extract main domain (hostname, no www)
-function getDomain(url) {
-    try {
-        const hostname = new URL(url).hostname;
-        return hostname.replace(/^www\./, '');
-    } catch (e) {
-        return null;
+chrome.tabs.onActivated.addListener((info) => {
+    handleTabChange(info.tabId);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === "complete") {
+        handleTabChange(tabId);
     }
+});
+
+function handleTabChange(tabId) {
+    if (activeTab !== null) {
+        saveTime(activeTab);
+    }
+    activeTab = tabId;
+    activeStartTime = Date.now();
 }
 
-// Save elapsed time for a domain
-function saveStopTime(domain) {
-    if (!startTime || !domain) return;
-    const stopTime = Date.now();
-    const elapsed = stopTime - startTime;
-
-    chrome.storage.local.get(['timeData'], (result) => {
-        const data = result.timeData || {};
-        if (!data[domain]) data[domain] = 0;
-        data[domain] += elapsed;
-        chrome.storage.local.set({ timeData: data });
-        startTime = null;
+function safeSend(tabId, msg) {
+    chrome.tabs.sendMessage(tabId, msg, () => {
+        if (chrome.runtime.lastError) {
+            // The tab probably doesn't have the script loaded
+            // or the tabId is invalid.
+            // We silently ignore this instead of crashing.
+        }
     });
 }
 
-// Handle tab activation
-chrome.tabs.onActivated.addListener(async (activeInfo) => {
-    if (activeTabId !== null && activeDomain && startTime) {
-        saveStopTime(activeDomain);
-    }
+function saveTime(tabId) {
+    if (!activeStartTime) return;
 
-    activeTabId = activeInfo.tabId;
-    const tab = await chrome.tabs.get(activeTabId);
-    if (!isValidUrl(tab.url)) {
-        activeDomain = null;
-        startTime = null;
-        return;
-    }
+    const duration = Date.now() - activeStartTime;
+    activeStartTime = null;
 
-    activeDomain = getDomain(tab.url);
-    startTime = Date.now();
-});
+    chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError) return;  // tab died
+        if (!tab || !tab.url) return;
 
-// Handle tab updates (like navigation)
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (tabId !== activeTabId) return;
-    if (!changeInfo.url || !isValidUrl(changeInfo.url)) return;
+        const domain = new URL(tab.url).hostname;
+        const dayKey = getTodayKey();
 
-    const newDomain = getDomain(changeInfo.url);
-    if (!newDomain || newDomain === activeDomain) return; // same domain, ignore
+        chrome.storage.local.get(["timeData", "limits", "blockModes"], (res) => {
+            const data = res.timeData || {};
+            const limits = res.limits || {};
+            const blockModes = res.blockModes || {};
 
-    // Save old domain time
-    if (activeDomain && startTime) saveStopTime(activeDomain);
+            if (!data[dayKey]) data[dayKey] = {};
+            data[dayKey][domain] = (data[dayKey][domain] || 0) + duration;
 
-    // Start tracking new domain
-    activeDomain = newDomain;
-    startTime = Date.now();
-});
+            chrome.storage.local.set({ timeData: data });
 
-// Handle tab closure
-chrome.tabs.onRemoved.addListener((tabId) => {
-    if (tabId === activeTabId && activeDomain && startTime) {
-        saveStopTime(activeDomain);
-        activeTabId = null;
-        activeDomain = null;
-        startTime = null;
+            const limit = limits[domain];
+            const mode = blockModes[domain] || "soft";
+
+            if (limit !== undefined) {
+                const spentMin = Math.floor(data[dayKey][domain] / 60000);
+
+                if (spentMin >= limit) {
+                    safeSend(tabId, {
+                        action: "applyBlock",
+                        mode: mode
+                    });
+
+                    chrome.tabs.update(tabId, { muted: true });
+                }
+            }
+        });
+    });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+    if (msg.action === "soft_override") {
+        if (!sender.tab) return;
+        safeSend(sender.tab.id, {
+            action: "show_goal_banner",
+            goal: msg.goal
+        });
     }
 });
